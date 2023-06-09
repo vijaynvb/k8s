@@ -1,0 +1,12 @@
+
+
+1. create a deployment which will generate random data in the container 
+for just 1 minute and make the container restart purposefully with livenessprobe check.
+
+2. have another deployment which will read the data from the volume and expose 
+it as a web page using nginx
+
+3. for sharing between pods we can use any type of volume
+
+4. expose service to access the web page from deployment 2 via node ip address
+

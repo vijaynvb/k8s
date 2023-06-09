@@ -1,0 +1,174 @@
+Step 0: 
+
+  sudo swapoff -a
+
+Step 1. Docker installation:
+
+Commands: 
+  nano docker.sh
+  chmod +x ./docker.sh
+  ./docker.sh
+
+-------------------------- docker.sh ------------------
+sudo apt-get update
+sudo apt-get install ca-certificates curl gnupg lsb-release
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo   "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+$(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+-------------------------- docker.sh ------------------
+
+
+* Note: press y when question asked to continue
+
+Step 2. CRI-D installation:
+
+    Commands: 
+      nano cri_docker.sh
+      chmod +x ./cri_docker.sh
+      ./cri_docker.sh
+
+-------------------------- cri_docker.sh ------------------
+git clone https://github.com/Mirantis/cri-dockerd.git
+
+mkdir bin
+VERSION=$((git describe --abbrev=0 --tags | sed -e 's/v//') || echo $(cat VERSION)-$(git log -1 --pretty='%h')) PRERELEASE=$(grep -q dev <<< "${VERSION}" && echo "pre" || echo "") REVISION=$(git log -1 --pretty='%h')
+go build -ldflags="-X github.com/Mirantis/cri-dockerd/version.Version='$VERSION}' -X github.com/Mirantis/cri-dockerd/version.PreRelease='$PRERELEASE' -X github.com/Mirantis/cri-dockerd/version.BuildTime='$BUILD_DATE' -X github.com/Mirantis/cri-dockerd/version.GitCommit='$REVISION'" -o cri-dockerd
+
+wget https://storage.googleapis.com/golang/getgo/installer_linux
+
+chmod +x ./installer_linux
+
+./installer_linux
+
+source ~/.bash_profile
+
+cd cri-dockerd
+mkdir bin
+go build -o bin/cri-dockerd
+mkdir -p /usr/local/bin
+install -o root -g root -m 0755 bin/cri-dockerd /usr/local/bin/cri-dockerd
+cp -a packaging/systemd/* /etc/systemd/system
+sed -i -e 's,/usr/bin/cri-dockerd,/usr/local/bin/cri-dockerd,' /etc/systemd/system/cri-docker.service
+systemctl daemon-reload
+systemctl enable cri-docker.service
+systemctl enable --now cri-docker.socket
+
+-------------------------- cri_docker.sh ------------------
+
+Step 3. Install K8s:
+
+Commands: 
+      nano k8s.sh
+      chmod +x ./k8s.sh
+      ./k8s.sh
+
+-------------------------- k8s.sh ------------------
+
+sudo apt-get update
+sudo apt-get install -y apt-transport-https ca-certificates curl
+
+sudo curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+sudo apt-get update
+sudo apt-get install -y kubelet kubeadm kubectl
+sudo apt-mark hold kubelet kubeadm kubectl
+-------------------------- k8s.sh ------------------
+
+Step 4. Cluster creation:
+
+kubeadm init --pod-network-cidr=192.168.0.0/16 --cri-socket /run/cri-dockerd.sock
+
+* Note: Copy the Kubeadm join value which is output of this command, needed for making other nodes to join the cluster.
+
+Step 5. Create CNI [Network for K8s Cluster]:
+
+Commands: 
+      nano k8s_network.sh
+      chmod +x ./k8s_network.sh
+      ./k8s_network.sh
+      watch kubectl get pods -n calico-system
+      kubectl taint nodes --all node-role.kubernetes.io/master-
+      kubectl taint nodes [master-node-host-name] node-role.kubernetes.io/control-plane:NoSchedule-
+      kubectl get nodes -o wide
+
+-------------------------- k8s_network.sh ------------------
+mkdir -p $HOME/.kube
+wget sftp
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+kubectl create -f https://projectcalico.docs.tigera.io/manifests/tigera-operator.yaml
+
+kubectl create -f https://projectcalico.docs.tigera.io/manifests/custom-resources.yaml
+-------------------------- k8s_network.sh ------------------
+
+
+      * Step 5.1. if not all pods running then do Calico fix for setting the ethernet interface: custom-resources.yaml
+
+
+      # This section includes base Calico installation configuration.
+      # For more information, see: https://projectcalico.docs.tigera.io/v3.23/reference/installation/api#operator.tigera.io/v1.Installation
+      apiVersion: operator.tigera.io/v1
+      kind: Installation
+      metadata:
+        name: default
+      spec:
+        # Configures Calico networking.
+        calicoNetwork:
+          # Note: The ipPools section cannot be modified post-install.
+          ipPools:
+          - blockSize: 26
+            cidr: 192.168.0.0/16
+            encapsulation: VXLANCrossSubnet
+            natOutgoing: Enabled
+            nodeSelector: all()
+          nodeAddressAutodetectionV4:
+            interface: eth0
+
+      ---
+
+      # This section configures the Calico API server.
+      # For more information, see: https://projectcalico.docs.tigera.io/v3.23/reference/installation/api#operator.tigera.io/v1.APIServer
+      apiVersion: operator.tigera.io/v1
+      kind: APIServer 
+      metadata: 
+        name: default 
+      spec: {}
+
+      Commands: 
+          nano custom-resources.yaml
+          kubectl create -f custom-resources.yaml 
+          watch kubectl get pods -n calico-system
+          kubectl get nodes -o wide
+
+Step 6. Nodes Join to master: 
+  Run this command on every node which has to be in cluster.
+  Copy the kubeadm join values from the cluster init [Step 4] command result and replace in the below command, 
+  this will be specific to each cluster master
+
+------------------------- generate new token ------------------
+
+# in master generate new token with print
+
+kubeadm token create hp9b0k.1g9tqz8vkf78ucwf --print-join-command
+
+example: 
+kubeadm join <<IP:PORT>> --token <<TOken Key>> 
+  --discovery-token-ca-cert-hash <<Certificate>> --cri-socket /run/cri-dockerd.sock 
+
+kubeadm join 142.93.223.144:6443 --token hoeqa2.7dbeb7pjmsrqi3fk 
+  --discovery-token-ca-cert-hash sha256:8ff298d926c243e1dffc7d490b045d04d135bbc07b71f3fb2e2a321d93bdadc4 --cri-socket /run/cri-dockerd.sock 
+
+# in node reset kubeadm 
+
+kubeadm reset
+
+# join to master
+
+------------------------- generate new token ------------------
+

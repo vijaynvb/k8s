@@ -1,0 +1,10 @@
+
+
+1. create a deployment for running todo_inmem container with 3 instances 
+and access it via public ip of cluster host nodes
+
+docker pull vijaynvb/todoinm:latest
+80
+http://locahost:80/swagger-ui.html
+
+
